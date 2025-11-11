@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Sequelize, DataTypes } = require('sequelize');
 const { createClient } = require('redis');
+require('dotenv').config(); // 引入并配置 dotenv
 
 // --- 基本设置 ---
 const app = express();
@@ -21,10 +22,15 @@ app.use(cors());
 app.use(express.json());
 
 // --- PostgreSQL 数据库设置 ---
-const sequelize = new Sequelize('voice_chat_db', 'user', 'password', {
-  host: 'localhost',
-  dialect: 'postgres'
-});
+const sequelize = new Sequelize(
+  process.env.DB_NAME || 'voice_chat_db', 
+  process.env.DB_USER || 'postgres', 
+  process.env.DB_PASSWORD || '123456', 
+  {
+    host: process.env.DB_HOST || 'localhost',
+    dialect: 'postgres'
+  }
+);
 
 const User = sequelize.define('User', {
   username: {
@@ -103,12 +109,14 @@ io.on('connection', (socket) => {
 
   socket.on('join-room', async (roomId) => {
     const roomKey = `room:${roomId}`;
+    const socketRoomMapKey = 'socket_to_room';
     const currentUser = JSON.stringify({ id: socket.id, username });
     
     const otherUsersRaw = await redisClient.lRange(roomKey, 0, -1);
     const otherUsers = otherUsersRaw.map(JSON.parse);
 
     await redisClient.rPush(roomKey, currentUser);
+    await redisClient.hSet(socketRoomMapKey, socket.id, roomId); // 记录 socket 所在的房间
     socket.join(roomId);
 
     socket.emit('existing-room-users', otherUsers);
@@ -131,10 +139,24 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', async () => {
-    console.log(`user disconnected: ${username}`);
-    // 这里需要一个更复杂的逻辑来查找用户所在的房间
-    // 为简化起见，我们假设客户端在离开时会发送一个 'leave-room' 事件
-    // 在生产环境中，需要一个 socket.id -> roomId 的映射
+    console.log(`user disconnected: ${username} (${socket.id})`);
+    const socketRoomMapKey = 'socket_to_room';
+    
+    // 查找用户所在的房间
+    const roomId = await redisClient.hGet(socketRoomMapKey, socket.id);
+    if (roomId) {
+      const roomKey = `room:${roomId}`;
+      const userToRemove = JSON.stringify({ id: socket.id, username });
+
+      // 从房间列表中移除用户
+      await redisClient.lRem(roomKey, 0, userToRemove);
+      // 从映射中删除 socket
+      await redisClient.hDel(socketRoomMapKey, socket.id);
+
+      // 通知房间里的其他人
+      socket.to(roomId).emit('user-left', socket.id);
+      console.log(`user ${username} left room ${roomId}`);
+    }
   });
 });
 

@@ -16,6 +16,7 @@ const Room = ({ token }) => {
   const [roomId, setRoomId] = useState('');
   const [isInRoom, setIsInRoom] = useState(false);
   const [peers, setPeers] = useState([]);
+  const [isMuted, setIsMuted] = useState(false);
 
   const socketRef = useRef();
   const userAudioRef = useRef();
@@ -28,7 +29,16 @@ const Room = ({ token }) => {
       },
     });
     
-    navigator.mediaDevices.getUserMedia({ video: false, audio: true }).then((stream) => {
+    const audioConstraints = {
+      audio: {
+        noiseSuppression: true,
+        echoCancellation: true,
+        autoGainControl: true,
+      },
+      video: false
+    };
+
+    navigator.mediaDevices.getUserMedia(audioConstraints).then((stream) => {
       userAudioRef.current = stream;
 
       socketRef.current.on('existing-room-users', (users) => {
@@ -131,6 +141,15 @@ const Room = ({ token }) => {
     }
   }
 
+  const toggleMute = () => {
+    if (userAudioRef.current) {
+      userAudioRef.current.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(prev => !prev);
+    }
+  };
+
   return (
     <div>
       {!isInRoom ? (
@@ -146,6 +165,7 @@ const Room = ({ token }) => {
       ) : (
         <div>
           <h2>当前房间: {roomId}</h2>
+          <button onClick={toggleMute}>{isMuted ? '取消静音' : '静音'}</button>
           <h3>参与者:</h3>
           <div>
             {peers.map((p) => (
