@@ -138,6 +138,43 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('send-chat-message', (payload) => {
+    const { roomId, message } = payload;
+    const messageData = {
+      username: socket.user.username,
+      message,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(roomId).emit('new-chat-message', messageData);
+  });
+
+  socket.on('user-mute-status', (payload) => {
+    const { roomId, isMuted } = payload;
+    socket.to(roomId).emit('user-toggled-mute', { id: socket.id, isMuted });
+  });
+
+  socket.on('get-rooms', async (callback) => {
+    let cursor = 0;
+    const roomKeys = [];
+    do {
+      const reply = await redisClient.scan(cursor, { MATCH: 'room:*', COUNT: 100 });
+      cursor = reply.cursor;
+      roomKeys.push(...reply.keys);
+    } while (cursor !== 0);
+
+    const rooms = [];
+    for (const key of roomKeys) {
+      const userCount = await redisClient.lLen(key);
+      if (userCount > 0) {
+        rooms.push({
+          id: key.replace('room:', ''),
+          userCount,
+        });
+      }
+    }
+    callback(rooms);
+  });
+
   socket.on('disconnect', async () => {
     console.log(`user disconnected: ${username} (${socket.id})`);
     const socketRoomMapKey = 'socket_to_room';

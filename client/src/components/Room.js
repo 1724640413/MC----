@@ -12,11 +12,11 @@ const Audio = (props) => {
   return <audio playsInline autoPlay ref={ref} />;
 };
 
-const Room = ({ token }) => {
-  const [roomId, setRoomId] = useState('');
-  const [isInRoom, setIsInRoom] = useState(false);
+const Room = ({ token, roomId, onLeaveRoom }) => {
   const [peers, setPeers] = useState([]);
   const [isMuted, setIsMuted] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
 
   const socketRef = useRef();
   const userAudioRef = useRef();
@@ -28,6 +28,8 @@ const Room = ({ token }) => {
         token,
       },
     });
+
+    socketRef.current.emit('join-room', roomId);
     
     const audioConstraints = {
       audio: {
@@ -50,7 +52,7 @@ const Room = ({ token }) => {
             peer,
             username: user.username,
           });
-          peers.push({ peerID: user.id, peer, username: user.username });
+          peers.push({ peerID: user.id, peer, username: user.username, isMuted: false });
         });
         setPeers(peers);
       });
@@ -67,7 +69,7 @@ const Room = ({ token }) => {
             peer,
             username: user.username,
           });
-          return [...prevPeers, { peerID: user.id, peer, username: user.username }];
+          return [...prevPeers, { peerID: user.id, peer, username: user.username, isMuted: false }];
         });
       });
 
@@ -87,6 +89,18 @@ const Room = ({ token }) => {
         }
       });
 
+      socketRef.current.on('user-toggled-mute', (payload) => {
+        const { id, isMuted } = payload;
+        setPeers(prevPeers => 
+          prevPeers.map(peer => {
+            if (peer.peerID === id) {
+              return { ...peer, isMuted };
+            }
+            return peer;
+          })
+        );
+      });
+
       socketRef.current.on('user-left', (id) => {
         const peerObj = peersRef.current.find((p) => p.peerID === id);
         if (peerObj) {
@@ -95,6 +109,10 @@ const Room = ({ token }) => {
         const newPeers = peersRef.current.filter((p) => p.peerID !== id);
         peersRef.current = newPeers;
         setPeers(newPeers);
+      });
+
+      socketRef.current.on('new-chat-message', (message) => {
+        setMessages((prevMessages) => [...prevMessages, message]);
       });
     });
 
@@ -134,49 +152,69 @@ const Room = ({ token }) => {
     return peer;
   }
 
-  function joinRoom() {
-    if (roomId.trim()) {
-      socketRef.current.emit('join-room', roomId);
-      setIsInRoom(true);
+
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    if (newMessage.trim()) {
+      socketRef.current.emit('send-chat-message', {
+        roomId,
+        message: newMessage,
+      });
+      setNewMessage('');
     }
-  }
+  };
 
   const toggleMute = () => {
     if (userAudioRef.current) {
+      const newMutedState = !isMuted;
       userAudioRef.current.getAudioTracks().forEach(track => {
-        track.enabled = !track.enabled;
+        track.enabled = !newMutedState;
       });
-      setIsMuted(prev => !prev);
+      setIsMuted(newMutedState);
+      socketRef.current.emit('user-mute-status', {
+        roomId,
+        isMuted: newMutedState,
+      });
     }
   };
 
   return (
     <div>
-      {!isInRoom ? (
-        <div>
-          <input
-            type="text"
-            placeholder="输入房间号"
-            value={roomId}
-            onChange={(e) => setRoomId(e.target.value)}
-          />
-          <button onClick={joinRoom}>加入房间</button>
-        </div>
-      ) : (
-        <div>
-          <h2>当前房间: {roomId}</h2>
-          <button onClick={toggleMute}>{isMuted ? '取消静音' : '静音'}</button>
-          <h3>参与者:</h3>
+      <div>
+        <h2>当前房间: {roomId}</h2>
+        <button onClick={onLeaveRoom}>离开房间</button>
+        <button onClick={toggleMute}>{isMuted ? '取消静音' : '静音'}</button>
+        <h3>参与者:</h3>
           <div>
             {peers.map((p) => (
               <div key={p.peerID}>
                 <Audio peer={p.peer} />
-                <p style={{fontSize: "12px"}}>{p.username}</p>
+                <p style={{fontSize: "12px"}}>
+                  {p.username} {p.isMuted ? '(已静音)' : ''}
+                </p>
               </div>
             ))}
           </div>
+        <hr />
+        <h3>聊天室</h3>
+        <div style={{ height: '200px', overflowY: 'scroll', border: '1px solid #ccc', padding: '10px', textAlign: 'left' }}>
+          {messages.map((msg, index) => (
+            <div key={index}>
+              <strong>{msg.username}:</strong> {msg.message}
+            </div>
+          ))}
         </div>
-      )}
+        <form onSubmit={handleSendMessage}>
+          <input
+            type="text"
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            placeholder="输入消息..."
+            style={{ width: '80%', padding: '5px' }}
+          />
+          <button type="submit">发送</button>
+        </form>
+      </div>
     </div>
   );
 };
