@@ -1,15 +1,35 @@
 import React, { useEffect, useState, useRef } from 'react';
+import GlobalMuteButton from './GlobalMuteButton';
 import Peer from 'simple-peer';
 import io from 'socket.io-client';
 
-const Audio = (props) => {
-  const ref = useRef();
+const Audio3D = ({ peer, panPosition }) => {
+  const audioRef = useRef();
+  const contextRef = useRef();
   useEffect(() => {
-    props.peer.on('stream', (stream) => {
-      ref.current.srcObject = stream;
-    });
-  }, [props.peer]);
-  return <audio playsInline autoPlay ref={ref} />;
+    const onStream = (stream) => {
+      if (!contextRef.current) {
+        contextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const ctx = contextRef.current;
+      const source = ctx.createMediaStreamSource(stream);
+      const panner = ctx.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.setPosition(panPosition.x, panPosition.y, panPosition.z);
+      source.connect(panner);
+      const dest = ctx.createMediaStreamDestination();
+      panner.connect(dest);
+      if (audioRef.current) {
+        audioRef.current.srcObject = dest.stream;
+      }
+    };
+    peer.on('stream', onStream);
+    return () => {
+      try { peer.off('stream', onStream); } catch(e) {}
+      if (contextRef.current) { contextRef.current.close(); contextRef.current = null; }
+    };
+  }, [peer, panPosition]);
+  return <audio playsInline autoPlay ref={audioRef} />;
 };
 
 const Room = ({ token, roomId, onLeaveRoom }) => {
@@ -17,6 +37,7 @@ const Room = ({ token, roomId, onLeaveRoom }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const [noiseMode, setNoiseMode] = useState('standard');
 
   const socketRef = useRef();
   const userAudioRef = useRef();
@@ -31,30 +52,20 @@ const Room = ({ token, roomId, onLeaveRoom }) => {
 
     socketRef.current.emit('join-room', roomId);
     
-    const audioConstraints = {
-      audio: {
-        noiseSuppression: true,
-        echoCancellation: true,
-        autoGainControl: true,
-      },
-      video: false
-    };
+    const audioConstraints = getAudioConstraints(noiseMode);
 
     navigator.mediaDevices.getUserMedia(audioConstraints).then((stream) => {
       userAudioRef.current = stream;
 
       socketRef.current.on('existing-room-users', (users) => {
-        const peers = [];
-        users.forEach((user) => {
+        const newPeers = [];
+        users.forEach((user, idx) => {
           const peer = createPeer(user.id, socketRef.current.id, stream);
-          peersRef.current.push({
-            peerID: user.id,
-            peer,
-            username: user.username,
-          });
-          peers.push({ peerID: user.id, peer, username: user.username, isMuted: false });
+          const pan = computePanPosition(idx);
+          peersRef.current.push({ peerID: user.id, peer, username: user.username, panPosition: pan });
+          newPeers.push({ peerID: user.id, peer, username: user.username, isMuted: false, panPosition: pan });
         });
-        setPeers(peers);
+        setPeers(newPeers);
       });
 
       socketRef.current.on('new-user-joined', (user) => {
@@ -64,12 +75,9 @@ const Room = ({ token, roomId, onLeaveRoom }) => {
             return prevPeers;
           }
           const peer = addPeer(user.id, stream);
-          peersRef.current.push({
-            peerID: user.id,
-            peer,
-            username: user.username,
-          });
-          return [...prevPeers, { peerID: user.id, peer, username: user.username, isMuted: false }];
+          const pan = computePanPosition(prevPeers.length);
+          peersRef.current.push({ peerID: user.id, peer, username: user.username, panPosition: pan });
+          return [...prevPeers, { peerID: user.id, peer, username: user.username, isMuted: false, panPosition: pan }];
         });
       });
 
@@ -123,6 +131,19 @@ const Room = ({ token, roomId, onLeaveRoom }) => {
       }
     };
   }, [token]);
+
+  const getAudioConstraints = (mode) => {
+    const base = { noiseSuppression: true, echoCancellation: true, autoGainControl: true };
+    if (mode === 'env') return { audio: { ...base, noiseSuppression: true }, video: false };
+    if (mode === 'keyboard') return { audio: { ...base, echoCancellation: false }, video: false };
+    return { audio: base, video: false };
+  };
+
+  const computePanPosition = (index) => {
+    const angle = (index % 8) * (Math.PI / 4);
+    const r = 1.0;
+    return { x: Math.cos(angle) * r, y: 0, z: Math.sin(angle) * r };
+  };
 
   function createPeer(userToSignal, callerID, stream) {
     const peer = new Peer({
@@ -178,17 +199,36 @@ const Room = ({ token, roomId, onLeaveRoom }) => {
     }
   };
 
+  const onNoiseModeChange = async (mode) => {
+    setNoiseMode(mode);
+    const newStream = await navigator.mediaDevices.getUserMedia(getAudioConstraints(mode));
+    const oldStream = userAudioRef.current;
+    const oldTrack = oldStream.getAudioTracks()[0];
+    const newTrack = newStream.getAudioTracks()[0];
+    peersRef.current.forEach(({ peer }) => {
+      try { peer.replaceTrack(oldTrack, newTrack, oldStream); } catch(e) {}
+    });
+    oldStream.getTracks().forEach(t => t.stop());
+    userAudioRef.current = newStream;
+  };
+
   return (
     <div>
       <div>
         <h2>当前房间: {roomId}</h2>
         <button onClick={onLeaveRoom}>离开房间</button>
         <button onClick={toggleMute}>{isMuted ? '取消静音' : '静音'}</button>
+        <GlobalMuteButton />
+        <select value={noiseMode} onChange={(e) => onNoiseModeChange(e.target.value)} style={{ marginLeft: 8 }}>
+          <option value="standard">标准模式</option>
+          <option value="env">环境降噪</option>
+          <option value="keyboard">机械键盘降噪</option>
+        </select>
         <h3>参与者:</h3>
           <div>
             {peers.map((p) => (
               <div key={p.peerID}>
-                <Audio peer={p.peer} />
+                <Audio3D peer={p.peer} panPosition={p.panPosition} />
                 <p style={{fontSize: "12px"}}>
                   {p.username} {p.isMuted ? '(已静音)' : ''}
                 </p>

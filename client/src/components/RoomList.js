@@ -3,6 +3,7 @@ import io from 'socket.io-client';
 
 const RoomList = ({ onJoinRoom }) => {
   const [rooms, setRooms] = useState([]);
+  const [tab, setTab] = useState('all');
   const socketRef = useRef();
 
   useEffect(() => {
@@ -27,13 +28,24 @@ const RoomList = ({ onJoinRoom }) => {
   return (
     <div>
       <h2>游戏大厅</h2>
+      <div style={{ marginBottom: 10 }}>
+        <button onClick={() => setTab('all')} disabled={tab==='all'}>全部</button>
+        <button onClick={() => setTab('moba')} disabled={tab==='moba'} style={{ marginLeft: 6 }}>MOBA 区</button>
+        <button onClick={() => setTab('fps')} disabled={tab==='fps'} style={{ marginLeft: 6 }}>射击区</button>
+      </div>
       {rooms.length > 0 ? (
         <ul>
           {rooms.map(room => (
             <li key={room.id} style={{ margin: '10px 0', listStyle: 'none' }}>
-              <span>房间: {room.id} ({room.userCount}人在线)</span>
-              <button onClick={() => onJoinRoom(room.id)} style={{ marginLeft: '10px' }}>
-                加入
+              <span>
+                房间: {room.id} ({room.userCount}人在线)
+                ，类型: {room.type || 'voice'}，创建者: {room.creator || 'unknown'}
+              </span>
+              <button onClick={() => onJoinRoom({ id: room.id, type: 'voice' })} style={{ marginLeft: '10px' }}>
+                加入语音房
+              </button>
+              <button onClick={() => onJoinRoom({ id: room.id, type: 'k' })} style={{ marginLeft: '6px' }}>
+                加入K歌房
               </button>
             </li>
           ))}

@@ -36,3 +36,80 @@
     transform: rotate(360deg);
   }
 }
+.app-dark-layout {
+  background: linear-gradient(180deg, #0e0f1a 0%, #15162b 100%);
+  min-height: 100vh;
+  color: #eaeaf2;
+}
+
+.app-content {
+  padding-bottom: 74px; /* for bottom nav space */
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.page-padding { padding: 16px; }
+.page-title { text-align: left; margin: 0 0 12px; }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.card { background: rgba(255,255,255,0.06); border-radius: 12px; padding: 16px; }
+
+/* Bottom Navigation */
+.bottom-nav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 64px;
+  background: rgba(20,21,40,0.95);
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+}
+.bn-item {
+  text-decoration: none;
+  color: #b8b9d4;
+  display: flex; flex-direction: column; align-items: center;
+  font-size: 12px;
+}
+.bn-item.active { color: #5ea2ff; }
+.bn-item.center { transform: translateY(-8px); }
+.bn-icon { font-size: 20px; line-height: 20px; }
+.bn-icon.big { font-size: 26px; }
+.bn-text { margin-top: 4px; }
+
+/* Floating Action Button */
+.fab {
+  position: fixed;
+  right: 18px;
+  bottom: 90px;
+  padding: 12px 16px;
+  border-radius: 999px;
+  background: #5ea2ff;
+  color: #fff;
+  border: none;
+  box-shadow: 0 8px 20px rgba(94,162,255,0.35);
+  cursor: pointer;
+}
+
+/* Simple Modal */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center;
+  z-index: 1200;
+}
+.modal {
+  width: 380px; max-width: 92vw; background: #1b1c33; color: #eaeaf2; border-radius: 12px; padding: 16px; box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+}
+.form-row { display: flex; flex-direction: column; text-align: left; margin-bottom: 10px; }
+.form-row label { font-size: 12px; margin-bottom: 6px; color: #a7a8bf; }
+.form-row input, .form-row select { height: 36px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: #222344; color: #fff; padding: 0 10px; }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.form-error { color: #ff8a8a; margin-bottom: 8px; }

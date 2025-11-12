@@ -1,45 +1,50 @@
 import React, { useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Auth from './components/Auth';
-import Room from './components/Room';
-import RoomList from './components/RoomList'; // 引入 RoomList
+import BottomNav from './components/BottomNav';
+import Home from './pages/Home';
+import Square from './pages/Square';
+import RoomsPage from './pages/RoomsPage';
+import Messages from './pages/Messages';
+import Mine from './pages/Mine';
 import './App.css';
 
+/**
+ * 应用入口：包含登录态与五页模块路由，以及底部导航
+ * - 未登录时显示登录页
+ * - 登录后展示模块化 UI 与底部导航
+ */
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
-  const [selectedRoomId, setSelectedRoomId] = useState(null);
 
+  /**
+   * 退出登录并清除本地 Token
+   */
   const handleLogout = () => {
     setToken(null);
-    setSelectedRoomId(null);
     localStorage.removeItem('token');
   };
 
-  const handleJoinRoom = (roomId) => {
-    setSelectedRoomId(roomId);
-  };
-
-  const handleLeaveRoom = () => {
-    setSelectedRoomId(null);
-  };
-
-  const renderContent = () => {
-    if (!token) {
-      return <Auth setToken={setToken} />;
-    }
-    if (selectedRoomId) {
-      return <Room token={token} roomId={selectedRoomId} onLeaveRoom={handleLeaveRoom} />;
-    }
-    return <RoomList onJoinRoom={handleJoinRoom} />;
-  };
+  if (!token) {
+    return <Auth setToken={setToken} />;
+  }
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>MC 语音聊天</h1>
-        {token && <button onClick={handleLogout}>退出登录</button>}
-        {renderContent()}
-      </header>
-    </div>
+    <BrowserRouter>
+      <div className="App app-dark-layout">
+        <div className="app-content">
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/square" element={<Square />} />
+            <Route path="/rooms" element={<RoomsPage token={token} />} />
+            <Route path="/messages" element={<Messages />} />
+            <Route path="/mine" element={<Mine onLogout={handleLogout} />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
+        <BottomNav />
+      </div>
+    </BrowserRouter>
   );
 }
 
