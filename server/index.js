@@ -63,6 +63,76 @@ initializeDatabases();
 
 const JWT_SECRET = 'your_super_secret_key';
 
+/**
+ * 读取房间歌曲队列
+ * @param {string} roomId
+ * @returns {Promise<Array<{title:string,artist:string,addedBy:string,addedAt:string}>>}
+ */
+async function readSongQueue(roomId) {
+  const key = `room:${roomId}:songs`;
+  const items = await redisClient.lRange(key, 0, -1).catch(() => []);
+  return items.map(s => { try { return JSON.parse(s); } catch { return null; }}).filter(Boolean);
+}
+
+/**
+ * 写入歌曲队列项（追加）
+ * @param {string} roomId
+ * @param {{title:string,artist:string,addedBy:string,addedAt:string}} song
+ */
+async function pushSong(roomId, song) {
+  const key = `room:${roomId}:songs`;
+  await redisClient.rPush(key, JSON.stringify(song));
+}
+
+/**
+ * 弹出下一首并设为当前
+ * @param {string} roomId
+ * @returns {Promise<object|null>}
+ */
+async function popNextSong(roomId) {
+  const listKey = `room:${roomId}:songs`;
+  const currentKey = `room:${roomId}:song_current`;
+  const raw = await redisClient.lPop(listKey).catch(() => null);
+  if (!raw) { await redisClient.del(currentKey); return null; }
+  await redisClient.set(currentKey, raw);
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+/**
+ * 读取当前曲目
+ * @param {string} roomId
+ * @returns {Promise<object|null>}
+ */
+async function readCurrentSong(roomId) {
+  const key = `room:${roomId}:song_current`;
+  const raw = await redisClient.get(key).catch(() => null);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+/**
+ * 判断用户是否为房主或已占用任意麦位
+ * @param {string} roomId
+ * @param {string} username
+ * @param {string} socketId
+ * @returns {Promise<boolean>}
+ */
+async function isOwnerOrOnSeat(roomId, username, socketId) {
+  const meta = await redisClient.hGetAll(`room_meta:${roomId}`).catch(() => ({}));
+  if (meta && meta.creator === username) return true;
+  const seatsKey = `room:${roomId}:seats`;
+  const fields = Array.from({ length: 16 }, (_, i) => `seat:${i}`);
+  const values = await hMGetCompat(seatsKey, fields);
+  for (const raw of values) {
+    if (!raw) continue;
+    try {
+      const occ = JSON.parse(raw);
+      if (occ && occ.id === socketId) return true;
+    } catch {}
+  }
+  return false;
+}
+
 // --- API 路由 ---
 app.post('/api/register', async (req, res) => {
   const { username, password } = req.body;
@@ -258,7 +328,7 @@ io.on('connection', (socket) => {
       const seatsKey = `room:${roomId}:seats`;
       const locksKey = `room:${roomId}:locks`;
       const seatFields = Array.from({ length: 16 }, (_, i) => `seat:${i}`);
-      const currentSeats = await redisClient.hMGet(seatsKey, seatFields);
+      const currentSeats = await hMGetCompat(seatsKey, seatFields);
       const updatedSeats = [];
       for (let i = 0; i < 16; i++) {
         const raw = currentSeats[i];
@@ -310,20 +380,106 @@ io.on('connection', (socket) => {
     callback(seats);
   });
 
+  // 房间元数据
+  socket.on('get_room_meta', async (roomId, callback) => {
+    const meta = await redisClient.hGetAll(`room_meta:${roomId}`).catch(() => ({}));
+    callback(meta || {});
+  });
+
+  // 点歌：获取队列与当前
+  socket.on('k_get_queue', async (roomId, callback) => {
+    const queue = await readSongQueue(roomId);
+    const current = await readCurrentSong(roomId);
+    callback({ queue, current });
+  });
+
+  // 点歌：添加歌曲
+  socket.on('k_add_song', async (payload) => {
+    const { roomId, title, artist } = payload || {};
+    if (!roomId || !title) return;
+    const song = { title, artist: artist || '', addedBy: socket.user?.username || 'unknown', addedAt: new Date().toISOString() };
+    await pushSong(roomId, song);
+    const queue = await readSongQueue(roomId);
+    io.to(roomId).emit('k_song_queue_update', queue);
+    const current = await readCurrentSong(roomId);
+    if (!current) {
+      const next = await popNextSong(roomId);
+      io.to(roomId).emit('k_song_current_update', next);
+    }
+  });
+
+  // 点歌：下一首
+  socket.on('k_next_song', async (roomId) => {
+    if (!roomId) return;
+    const allowed = await isOwnerOrOnSeat(roomId, socket.user?.username, socket.id);
+    if (!allowed) return;
+    const next = await popNextSong(roomId);
+    const queue = await readSongQueue(roomId);
+    io.to(roomId).emit('k_song_queue_update', queue);
+    io.to(roomId).emit('k_song_current_update', next);
+  });
+
+  // 点歌：移除队列项（仅房主）
+  socket.on('k_remove_song', async (payload) => {
+    const { roomId, index } = payload || {};
+    if (index == null || !roomId) return;
+    const meta = await redisClient.hGetAll(`room_meta:${roomId}`).catch(() => ({}));
+    if (!meta || meta.creator !== (socket.user?.username || '')) return;
+    const listKey = `room:${roomId}:songs`;
+    // 使用 LINDEX 获取并 LREM 删除第一条匹配项
+    const raw = await redisClient.lIndex(listKey, index).catch(() => null);
+    if (raw) {
+      await redisClient.lRem(listKey, 1, raw).catch(() => {});
+      const queue = await readSongQueue(roomId);
+      io.to(roomId).emit('k_song_queue_update', queue);
+    }
+  });
+
+  // 点歌：移动队列项（仅房主）
+  socket.on('k_move_song', async (payload) => {
+    const { roomId, from, to } = payload || {};
+    if (!roomId || from == null || to == null) return;
+    const meta = await redisClient.hGetAll(`room_meta:${roomId}`).catch(() => ({}));
+    if (!meta || meta.creator !== (socket.user?.username || '')) return;
+    const list = await readSongQueue(roomId);
+    if (from < 0 || from >= list.length || to < 0 || to >= list.length) return;
+    const [item] = list.splice(from, 1);
+    list.splice(to, 0, item);
+    const listKey = `room:${roomId}:songs`;
+    await redisClient.del(listKey).catch(() => {});
+    for (const s of list) {
+      await redisClient.rPush(listKey, JSON.stringify(s));
+    }
+    io.to(roomId).emit('k_song_queue_update', list);
+  });
+
   socket.on('k_join_seat', async (payload) => {
     const { roomId, index } = payload;
     if (index < 0 || index > 15) return;
     const seatsKey = `room:${roomId}:seats`;
     const locksKey = `room:${roomId}:locks`;
-    const [occupiedRaw, lockedRaw] = await redisClient.hMGet(
-      seatsKey,
-      [`seat:${index}`]
-    ).then(async ([occ]) => {
-      const lock = await redisClient.hGet(locksKey, `lock:${index}`);
-      return [occ, lock];
-    });
+    const [occupiedRaw] = await hMGetCompat(seatsKey, [`seat:${index}`]);
+    const lockedRaw = await redisClient.hGet(locksKey, `lock:${index}`);
     if (lockedRaw === '1') return; // 锁定不可上麦
-    if (occupiedRaw) return; // 已被占用
+    if (occupiedRaw) return; // 目标位已被占用
+
+    // 查找当前用户是否已占用其它麦位，若是则先释放之前麦位
+    const seatFields = Array.from({ length: 16 }, (_, i) => `seat:${i}`);
+    const currentSeats = await hMGetCompat(seatsKey, seatFields);
+    let previousIndex = -1;
+    for (let i = 0; i < 16; i++) {
+      const raw = currentSeats[i];
+      if (!raw) continue;
+      try {
+        const occ = JSON.parse(raw);
+        if (occ && occ.id === socket.id) { previousIndex = i; break; }
+      } catch {}
+    }
+    if (previousIndex >= 0 && previousIndex !== index) {
+      await redisClient.hDel(seatsKey, `seat:${previousIndex}`);
+    }
+
+    // 占用目标麦位
     const occupant = JSON.stringify({ id: socket.id, username });
     await redisClient.hSet(seatsKey, `seat:${index}`, occupant);
     const seats = await buildSeatsResponse(redisClient, roomId);
@@ -366,8 +522,8 @@ async function buildSeatsResponse(redisClient, roomId) {
   const seatFields = Array.from({ length: 16 }, (_, i) => `seat:${i}`);
   const lockFields = Array.from({ length: 16 }, (_, i) => `lock:${i}`);
   const [seatsRaw, locksRaw] = await Promise.all([
-    redisClient.hMGet(seatsKey, seatFields),
-    redisClient.hMGet(locksKey, lockFields),
+    hMGetCompat(seatsKey, seatFields),
+    hMGetCompat(locksKey, lockFields),
   ]);
   const seats = [];
   for (let i = 0; i < 16; i++) {
@@ -386,3 +542,14 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`listening on *:${PORT}`);
 });
+// 兼容不同版本 redis 客户端的 HMGET 实现
+async function hMGetCompat(key, fields) {
+  if (typeof redisClient.hMGet === 'function') {
+    return await redisClient.hMGet(key, fields);
+  }
+  if (typeof redisClient.hmGet === 'function') {
+    return await redisClient.hmGet(key, fields);
+  }
+  const results = await Promise.all(fields.map(f => redisClient.hGet(key, f)));
+  return results;
+}

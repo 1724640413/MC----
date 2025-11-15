@@ -54,10 +54,18 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [seats, setSeats] = useState(Array.from({ length: 16 }, (_, i) => ({ index: i, occupant: null, locked: false })));
   const [noiseMode, setNoiseMode] = useState('standard'); // standard | env | keyboard
+  const [queue, setQueue] = useState([]);
+  const [currentSong, setCurrentSong] = useState(null);
+  const [songTitle, setSongTitle] = useState('');
+  const [songArtist, setSongArtist] = useState('');
+  const [effectPreset, setEffectPreset] = useState('standard');
+  const [score, setScore] = useState(0);
 
   const socketRef = useRef();
   const userAudioRef = useRef();
   const peersRef = useRef([]);
+  const scoreTimerRef = useRef();
+  const [isOwner, setIsOwner] = useState(false);
 
   // 获取不同降噪模式的约束
   /**
@@ -95,6 +103,28 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
       setSeats(initialSeats);
     });
 
+    // 首次获取队列与当前曲目
+    socketRef.current.emit('k_get_queue', roomId, ({ queue, current }) => {
+      setQueue(queue || []);
+      setCurrentSong(current || null);
+    });
+
+    // 房间元数据获取以判断权限
+    socketRef.current.emit('get_room_meta', roomId, (meta) => {
+      const username = (() => {
+        const token = localStorage.getItem('token');
+        if (!token) return '';
+        try {
+          const payload = token.split('.')[1];
+          const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+          const json = decodeURIComponent(atob(base64).split('').map(c => '%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+          const data = JSON.parse(json);
+          return data.username || '';
+        } catch { return ''; }
+      })();
+      setIsOwner(!!meta && meta.creator === username);
+    });
+
     // 监听座位更新
     socketRef.current.on('k_seats_update', (updatedSeats) => {
       setSeats(updatedSeats);
@@ -103,6 +133,21 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
     // 语音与信令
     navigator.mediaDevices.getUserMedia(getAudioConstraints(noiseMode)).then((stream) => {
       userAudioRef.current = stream;
+
+      // 启动简易打分
+      try { if (scoreTimerRef.current) clearInterval(scoreTimerRef.current); } catch(e) {}
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
+      scoreTimerRef.current = setInterval(() => {
+        analyser.getByteTimeDomainData(dataArray);
+        let sum = 0; for (let i = 0; i < dataArray.length; i++) { const v = (dataArray[i]-128)/128; sum += v*v; }
+        const rms = Math.sqrt(sum / dataArray.length);
+        setScore(Math.round(rms * 100));
+      }, 500);
 
       socketRef.current.on('existing-room-users', (users) => {
         const newPeers = [];
@@ -147,13 +192,17 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
         setPeers(next);
       });
 
+      try { socketRef.current.off('new-chat-message'); } catch(e) {}
       socketRef.current.on('new-chat-message', (message) => {
         setMessages((prev) => [...prev, message]);
       });
+      socketRef.current.on('k_song_queue_update', (q) => setQueue(q || []));
+      socketRef.current.on('k_song_current_update', (cur) => setCurrentSong(cur || null));
     });
 
     return () => {
       socketRef.current.disconnect();
+      try { if (scoreTimerRef.current) clearInterval(scoreTimerRef.current); } catch(e) {}
       if (userAudioRef.current) {
         userAudioRef.current.getTracks().forEach(t => t.stop());
       }
@@ -264,6 +313,62 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
     userAudioRef.current = newStream;
   };
 
+  /**
+   * 添加歌曲到队列
+   */
+  const addSong = (e) => {
+    e.preventDefault();
+    const title = songTitle.trim();
+    const artist = songArtist.trim();
+    if (!title) return;
+    socketRef.current.emit('k_add_song', { roomId, title, artist });
+    setSongTitle(''); setSongArtist('');
+  };
+
+  /**
+   * 切换到下一首
+   */
+  const nextSong = () => {
+    socketRef.current.emit('k_next_song', roomId);
+  };
+
+  /**
+   * 应用音效预设并替换本地音轨
+   * @param {string} preset - 音效预设名称
+   */
+  const applyEffectPreset = async (preset) => {
+    setEffectPreset(preset);
+    const baseStream = userAudioRef.current;
+    if (!baseStream) return;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = ctx.createMediaStreamSource(baseStream);
+    const gain = ctx.createGain();
+    const low = ctx.createBiquadFilter(); low.type = 'lowshelf';
+    const high = ctx.createBiquadFilter(); high.type = 'highshelf';
+    const dest = ctx.createMediaStreamDestination();
+
+    let g = 1.0, lowGain = 0, highGain = 0;
+    if (preset === 'soft') { g = 0.9; highGain = -5; }
+    else if (preset === 'bright') { g = 1.0; highGain = 6; }
+    else if (preset === 'bass') { g = 1.0; lowGain = 6; }
+    else if (preset === 'treble') { g = 1.0; highGain = 10; }
+    gain.gain.value = g;
+    low.gain.value = lowGain;
+    high.gain.value = highGain;
+
+    source.connect(low);
+    low.connect(high);
+    high.connect(gain);
+    gain.connect(dest);
+
+    const newTrack = dest.stream.getAudioTracks()[0];
+    const oldTrack = baseStream.getAudioTracks()[0];
+    peersRef.current.forEach(({ peer }) => {
+      try { peer.replaceTrack(oldTrack, newTrack, baseStream); } catch(e) {}
+    });
+    userAudioRef.current = dest.stream;
+  };
+
   return (
     <div>
       <h2>娱乐K歌房: {roomId}</h2>
@@ -276,6 +381,14 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
           <option value="env">环境降噪</option>
           <option value="keyboard">机械键盘降噪</option>
         </select>
+        <select value={effectPreset} onChange={(e) => applyEffectPreset(e.target.value)} style={{ marginLeft: 8 }}>
+          <option value="standard">标准音效</option>
+          <option value="soft">柔和</option>
+          <option value="bright">明亮</option>
+          <option value="bass">低音增强</option>
+          <option value="treble">高音增强</option>
+        </select>
+        <span style={{ marginLeft: 12 }}>打分：{score}</span>
       </div>
 
       <h3>麦位（最多16人上麦）</h3>
@@ -318,6 +431,37 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
       </div>
 
       <hr />
+      <h3>点歌系统</h3>
+      <form onSubmit={addSong} style={{ textAlign: 'left', marginBottom: 8 }}>
+        <input type="text" placeholder="歌曲名" value={songTitle} onChange={(e) => setSongTitle(e.target.value)} style={{ width: '30%', padding: 5, marginRight: 6 }} />
+        <input type="text" placeholder="歌手" value={songArtist} onChange={(e) => setSongArtist(e.target.value)} style={{ width: '20%', padding: 5, marginRight: 6 }} />
+        <button type="submit">点歌</button>
+        <button type="button" onClick={nextSong} style={{ marginLeft: 8 }}>下一首</button>
+      </form>
+      <div style={{ textAlign: 'left', marginBottom: 8 }}>
+        <div>当前：{currentSong ? `${currentSong.title} - ${currentSong.artist || ''}` : '无'}</div>
+      </div>
+      <div style={{ textAlign: 'left', border: '1px solid #333', padding: 10, borderRadius: 6 }}>
+        <div style={{ fontWeight: 'bold', marginBottom: 6 }}>待播列表</div>
+        {(queue || []).length ? (
+          <ol>
+            {queue.map((s, i) => (
+              <li key={i}>
+                {s.title} - {s.artist || ''}（{s.addedBy}）
+                {isOwner && (
+                  <>
+                    <button style={{ marginLeft: 8 }} onClick={() => socketRef.current.emit('k_remove_song', { roomId, index: i })}>移除</button>
+                    {i > 0 && <button style={{ marginLeft: 4 }} onClick={() => socketRef.current.emit('k_move_song', { roomId, from: i, to: i-1 })}>上移</button>}
+                    {i < (queue.length-1) && <button style={{ marginLeft: 4 }} onClick={() => socketRef.current.emit('k_move_song', { roomId, from: i, to: i+1 })}>下移</button>}
+                  </>
+                )}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div>空</div>
+        )}
+      </div>
       <h3>聊天室</h3>
       <div style={{ height: 200, overflowY: 'scroll', border: '1px solid #ccc', padding: 10, textAlign: 'left' }}>
         {messages.map((msg, idx) => (

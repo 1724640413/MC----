@@ -119,6 +119,7 @@ const Room = ({ token, roomId, onLeaveRoom }) => {
         setPeers(newPeers);
       });
 
+      try { socketRef.current.off('new-chat-message'); } catch(e) {}
       socketRef.current.on('new-chat-message', (message) => {
         setMessages((prevMessages) => [...prevMessages, message]);
       });
