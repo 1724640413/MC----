@@ -7,10 +7,12 @@ import Square from './pages/Square';
 import RoomsPage from './pages/RoomsPage';
 import Messages from './pages/Messages';
 import Mine from './pages/Mine';
+import Friends from './components/Friends';
+import GameLobby from './components/GameLobby';
 import './App.css';
 
 /**
- * 应用入口：包含登录态与五页模块路由，以及底部导航
+ * 应用入口：包含登录态与多页模块路由，以及底部导航
  * - 未登录时显示登录页
  * - 登录后展示模块化 UI 与底部导航
  */
@@ -39,6 +41,8 @@ function App() {
             <Route path="/rooms" element={<RoomsPage token={token} />} />
             <Route path="/messages" element={<Messages />} />
             <Route path="/mine" element={<Mine onLogout={handleLogout} />} />
+            <Route path="/friends" element={<Friends token={token} />} />
+            <Route path="/game-lobby" element={<GameLobby token={token} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

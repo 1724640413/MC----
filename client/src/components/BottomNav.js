@@ -2,7 +2,7 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 
 /**
- * 底部导航：五个入口：首页、广场、房间、消息、我的
+ * 底部导航：七个入口：首页、广场、房间、消息、游戏、好友、我的
  */
 const BottomNav = () => {
   return (
@@ -22,6 +22,14 @@ const BottomNav = () => {
       <NavLink to="/messages" className={({ isActive }) => isActive ? 'bn-item active' : 'bn-item'}>
         <span className="bn-icon">💬</span>
         <span className="bn-text">消息</span>
+      </NavLink>
+      <NavLink to="/game-lobby" className={({ isActive }) => isActive ? 'bn-item active' : 'bn-item'}>
+        <span className="bn-icon">🎮</span>
+        <span className="bn-text">游戏</span>
+      </NavLink>
+      <NavLink to="/friends" className={({ isActive }) => isActive ? 'bn-item active' : 'bn-item'}>
+        <span className="bn-icon">🧑‍🤝‍🧑</span>
+        <span className="bn-text">好友</span>
       </NavLink>
       <NavLink to="/mine" className={({ isActive }) => isActive ? 'bn-item active' : 'bn-item'}>
         <span className="bn-icon">👤</span>

@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { Sequelize, DataTypes } = require('sequelize');
+const { Sequelize, DataTypes, Op } = require('sequelize');
 const { createClient } = require('redis');
 require('dotenv').config(); // 引入并配置 dotenv
 
@@ -44,6 +44,16 @@ const User = sequelize.define('User', {
   }
 });
 
+const Friendship = sequelize.define('Friendship', {
+  status: {
+    type: DataTypes.ENUM('pending', 'accepted', 'declined', 'blocked'),
+    defaultValue: 'pending'
+  }
+});
+
+User.belongsToMany(User, { as: 'Friends', through: Friendship, foreignKey: 'requesterId', otherKey: 'addresseeId' });
+
+
 // --- Redis 客户端设置 ---
 const redisClient = createClient();
 redisClient.on('error', (err) => console.log('Redis Client Error', err));
@@ -62,6 +72,20 @@ const initializeDatabases = async () => {
 initializeDatabases();
 
 const JWT_SECRET = 'your_super_secret_key';
+
+// Middleware for authenticating JWT
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (token == null) return res.sendStatus(401);
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
 
 /**
  * 读取房间歌曲队列
@@ -161,6 +185,105 @@ app.post('/api/login', async (req, res) => {
   res.json({ token });
 });
 
+app.post('/api/friends/add', authenticateToken, async (req, res) => {
+    const { addresseeId } = req.body;
+    const requesterId = req.user.id;
+
+    if (requesterId === addresseeId) {
+        return res.status(400).json({ message: 'You cannot add yourself as a friend.' });
+    }
+
+    try {
+        const addressee = await User.findByPk(addresseeId);
+        if (!addressee) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        const existingFriendship = await Friendship.findOne({
+            where: {
+                [Op.or]: [
+                    { requesterId: requesterId, addresseeId: addresseeId },
+                    { requesterId: addresseeId, addresseeId: requesterId },
+                ],
+            },
+        });
+
+        if (existingFriendship) {
+            if (existingFriendship.status === 'accepted') {
+                return res.status(400).json({ message: 'You are already friends with this user.' });
+            } else if (existingFriendship.status === 'pending') {
+                return res.status(400).json({ message: 'Friend request already sent.' });
+            }
+        }
+
+        const friendship = await Friendship.create({
+            requesterId,
+            addresseeId,
+            status: 'pending',
+        });
+
+        io.to(addresseeId).emit('friend-request', { from: req.user.username });
+
+        res.status(201).json({ message: 'Friend request sent.' });
+    } catch (error) {
+        res.status(500).json({ message: 'Error sending friend request.' });
+    }
+});
+
+app.put('/api/friends/update', authenticateToken, async (req, res) => {
+    const { requesterId, status } = req.body;
+    const addresseeId = req.user.id;
+
+    try {
+        const friendship = await Friendship.findOne({
+            where: { requesterId, addresseeId, status: 'pending' },
+        });
+
+        if (!friendship) {
+            return res.status(404).json({ message: 'Friend request not found.' });
+        }
+
+        friendship.status = status;
+        await friendship.save();
+
+        io.to(requesterId).emit('friend-request-accepted', { by: req.user.username });
+
+        res.status(200).json({ message: `Friend request ${status}.` });
+    } catch (error) {
+        res.status(500).json({ message: 'Error updating friend request.' });
+    }
+});
+
+app.get('/api/friends', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+
+    try {
+        const friendships = await Friendship.findAll({
+            where: {
+                [Op.or]: [{ requesterId: userId }, { addresseeId: userId }],
+                status: 'accepted',
+            },
+            include: [
+                { model: User, as: 'requester', attributes: ['id', 'username'] },
+                { model: User, as: 'addressee', attributes: ['id', 'username'] },
+            ],
+        });
+
+        const friends = friendships.map(f => {
+            if (f.requesterId === userId) {
+                return f.addressee;
+            } else {
+                return f.requester;
+            }
+        });
+
+        res.json(friends);
+    } catch (error) {
+        res.status(500).json({ message: 'Error fetching friends.' });
+    }
+});
+
+
 // --- Socket.IO 中间件 (用于认证) ---
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
@@ -176,6 +299,7 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const { username, id: userId } = socket.user;
   console.log(`user connected: ${username} (${socket.id})`);
+  socket.join(userId.toString());
 
   socket.on('join-room', async (roomId) => {
     const roomKey = `room:${roomId}`;
