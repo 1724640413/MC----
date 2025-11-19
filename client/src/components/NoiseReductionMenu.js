@@ -10,7 +10,7 @@ import React from 'react';
  */
 const NoiseReductionMenu = ({ noiseMode, onNoiseModeChange }) => {
     return (
-        <select value={noiseMode} onChange={(e) => onNoiseModeChange(e.target.value)} style={{ marginLeft: 8 }}>
+        <select value={noiseMode} onChange={(e) => onNoiseModeChange(e.target.value)}>
             <option value="standard">标准模式</option>
             <option value="env">环境降噪</option>
             <option value="keyboard">机械键盘降噪</option>

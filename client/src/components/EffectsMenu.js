@@ -10,7 +10,7 @@ import React from 'react';
  */
 const EffectsMenu = ({ effectPreset, onEffectPresetChange }) => {
     return (
-        <select value={effectPreset} onChange={(e) => onEffectPresetChange(e.target.value)} style={{ marginLeft: 8 }}>
+        <select value={effectPreset} onChange={(e) => onEffectPresetChange(e.target.value)}>
             <option value="standard">标准音效</option>
             <option value="soft">柔和</option>
             <option value="bright">明亮</option>

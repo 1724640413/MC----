@@ -5,31 +5,30 @@ const Seat = ({ seat, onJoin, onLeave, onToggleLock, isOwner, currentUserId }) =
     const isOccupied = occupant !== null;
     const isCurrentUser = isOccupied && occupant.id === currentUserId;
 
+    const seatClasses = [
+        'seat',
+        isOccupied ? 'occupied' : '',
+        locked ? 'locked' : ''
+    ].join(' ').trim();
+
     return (
-        <div style={{ border: '1px solid #ccc', padding: 10, borderRadius: 6 }}>
-            <div style={{ fontWeight: 'bold' }}>Seat {index + 1}</div>
-            <div style={{ fontSize: 12, color: locked ? '#c00' : '#0a0' }}>
-                {locked ? 'Locked' : 'Available'}
+        <div className={seatClasses}>
+            <div>Seat {index + 1}</div>
+            <div className="seat-username">
+                {isOccupied ? occupant.username : (locked ? 'Locked' : 'Available')}
             </div>
-            <div style={{ marginTop: 6 }}>
+            <div className="seat-actions">
                 {isOccupied ? (
-                    <div>
-                        <div style={{ fontSize: 12 }}>Occupant: {occupant.username}</div>
-                        {isCurrentUser ? (
-                            <button onClick={() => onLeave(index)}>Leave</button>
-                        ) : (
-                            <button disabled>Occupied</button>
-                        )}
-                    </div>
+                    isCurrentUser && <button onClick={() => onLeave(index)}>Leave</button>
                 ) : (
-                    <button disabled={locked} onClick={() => onJoin(index)}>Join</button>
+                    !locked && <button onClick={() => onJoin(index)}>Join</button>
+                )}
+                {isOwner && (
+                    <button onClick={() => onToggleLock(index)} className="lock-button">
+                        {locked ? 'Unlock' : 'Lock'}
+                    </button>
                 )}
             </div>
-            {isOwner && (
-                <div style={{ marginTop: 6 }}>
-                    <button onClick={() => onToggleLock(index)}>{locked ? 'Unlock' : 'Lock'}</button>
-                </div>
-            )}
         </div>
     );
 };

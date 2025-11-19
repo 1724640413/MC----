@@ -1,0 +1,259 @@
+/* KRoom.css - Modern Dark Theme */
+
+:root {
+  --primary-bg: #1a1a2e;
+  --secondary-bg: #16213e;
+  --tertiary-bg: rgba(22, 33, 62, 0.8);
+  --accent-color: #0f3460;
+  --highlight-color: #e94560;
+  --text-color: #dcdcdc;
+  --light-text-color: #a0a0a0;
+  --border-color: rgba(255, 255, 255, 0.1);
+  --seat-locked-bg: rgba(233, 69, 96, 0.2);
+  --seat-occupied-bg: rgba(83, 120, 149, 0.3);
+}
+
+.kroom-container {
+  background: linear-gradient(135deg, var(--primary-bg), var(--secondary-bg));
+  color: var(--text-color);
+  padding: 20px;
+  border-radius: 15px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  min-height: 100vh;
+}
+
+.kroom-header {
+  text-align: center;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 15px;
+}
+
+.kroom-header h2 {
+    color: var(--highlight-color);
+    text-shadow: 0 0 5px var(--highlight-color);
+}
+
+.kroom-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 25px;
+  padding: 15px;
+  background-color: var(--tertiary-bg);
+  border-radius: 10px;
+  backdrop-filter: blur(5px);
+}
+
+/* --- Buttons & Selects --- */
+.kroom-button, .kroom-controls button, .kroom-controls select {
+  background-color: var(--accent-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background-color 0.3s, transform 0.2s;
+  font-size: 14px;
+}
+
+.kroom-controls button:hover, .kroom-controls select:hover {
+  background-color: #537895;
+  transform: translateY(-2px);
+}
+
+.kroom-controls button:disabled {
+    background-color: #3a3a3a;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* --- Section Titles --- */
+h3 {
+  color: var(--highlight-color);
+  margin-top: 30px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 5px;
+}
+
+/* --- Seat Grid & Seat Component --- */
+.seat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 15px;
+}
+
+.seat {
+    background-color: var(--tertiary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 10px;
+    text-align: center;
+    transition: background-color 0.3s, transform 0.3s;
+    cursor: pointer;
+}
+
+.seat:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.seat.occupied {
+    background-color: var(--seat-occupied-bg);
+    cursor: default;
+}
+
+.seat.locked {
+    background-color: var(--seat-locked-bg);
+    box-shadow: 0 0 8px var(--highlight-color);
+}
+
+.seat-username {
+    font-weight: bold;
+    color: var(--text-color);
+    margin: 5px 0;
+    min-height: 20px;
+}
+
+.seat-actions button {
+    background-color: var(--accent-color);
+    color: var(--text-color);
+    border: none;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin: 2px;
+    transition: background-color 0.2s;
+}
+
+.seat-actions button:hover {
+    background-color: #537895;
+}
+
+.seat-actions .lock-button {
+    background-color: var(--highlight-color);
+}
+
+
+/* --- Participants --- */
+.participants-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.participant {
+    background: var(--tertiary-bg);
+    padding: 10px;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 12px;
+    width: 100px;
+}
+.participant p {
+    margin: 5px 0 0 0;
+    color: var(--light-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* --- Song List --- */
+.song-list-container {
+    background: var(--tertiary-bg);
+    padding: 15px;
+    border-radius: 10px;
+}
+.song-list-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+    align-items: center;
+}
+.song-list-controls input {
+    flex-grow: 1;
+    background-color: rgba(255,255,255,0.1);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 8px 12px;
+    border-radius: 5px;
+}
+.song-list-controls button {
+    padding: 8px 12px;
+    border-radius: 5px;
+}
+.song-list ul {
+    list-style: none;
+    padding: 0;
+}
+.song-list ul li {
+    background-color: rgba(0,0,0,0.2);
+    padding: 10px;
+    border-radius: 5px;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background-color 0.3s;
+}
+.song-list ul li:hover {
+    background-color: rgba(0,0,0,0.4);
+}
+.song-list-actions button {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--light-text-color);
+    padding: 2px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 5px;
+    transition: background-color 0.3s, color 0.3s;
+}
+.song-list-actions button:hover {
+    background-color: var(--highlight-color);
+    color: white;
+}
+.song-list-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+
+/* --- Chat --- */
+.chat-container {
+    margin-top: 20px;
+}
+.chat-messages {
+    height: 200px;
+    overflow-y: scroll;
+    border: 1px solid var(--border-color);
+    padding: 10px;
+    border-radius: 8px;
+    background-color: var(--tertiary-bg);
+    margin-bottom: 10px;
+}
+.chat-messages div {
+    margin-bottom: 5px;
+    font-size: 14px;
+}
+.chat-messages strong {
+    color: var(--highlight-color);
+}
+.chat-form {
+    display: flex;
+    gap: 10px;
+}
+.chat-form input {
+    flex-grow: 1;
+    background-color: rgba(255,255,255,0.1);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 8px 12px;
+    border-radius: 20px;
+}
+.chat-form button {
+    background-color: var(--accent-color);
+    border-radius: 20px;
+}
