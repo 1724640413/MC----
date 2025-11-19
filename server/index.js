@@ -663,6 +663,15 @@ async function buildSeatsResponse(redisClient, roomId) {
 }
 
 const PORT = process.env.PORT || 3001;
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Use \`lsof -i :${PORT}\` to find the process and \`kill <PID>\`, or set a different PORT env var.`);
+    process.exit(1);
+  }
+  console.error('Server error:', err);
+  process.exit(1);
+});
+
 server.listen(PORT, () => {
   console.log(`listening on *:${PORT}`);
 });

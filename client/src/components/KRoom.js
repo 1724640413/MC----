@@ -40,6 +40,22 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
 
   // ... (所有核心逻辑函数保持不变)
 
+  // 切换静音状态并通知服务器（如果已连接）
+  const toggleMute = () => {
+    setIsMuted(prev => {
+      const next = !prev;
+      try {
+        if (socketRef.current && socketRef.current.emit) {
+          socketRef.current.emit('user-mute-status', { roomId, isMuted: next });
+        }
+      } catch (e) {
+        // ignore emit errors in dev
+      }
+      // 如果正在使用本地音频流，也可在此停止/恢复轨道（留给完整实现）
+      return next;
+    });
+  };
+
   return (
     <div className="kroom-container">
       <div className="kroom-header">

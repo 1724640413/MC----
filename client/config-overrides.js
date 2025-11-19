@@ -5,6 +5,10 @@ const webpack = require('webpack');
 const webpackOverride = override(
   (config) => {
     const fallback = config.resolve.fallback || {};
+    // Ensure process/browser is resolvable for packages (e.g. axios) that import it
+    try {
+      fallback['process'] = require.resolve('process/browser');
+    } catch (e) {}
     Object.assign(fallback, {
       "crypto": require.resolve("crypto-browserify"),
       "stream": require.resolve("stream-browserify"),
@@ -16,6 +20,16 @@ const webpackOverride = override(
     });
     config.resolve.fallback = fallback;
     
+    // Add explicit alias for fully-specified resolution and provide global shims
+    config.resolve.alias = config.resolve.alias || {};
+    try {
+      config.resolve.alias['process/browser'] = require.resolve('process/browser');
+    } catch (e) {}
+    try {
+      // also map explicit .js request to satisfy fully-specified resolution
+      config.resolve.alias['process/browser.js'] = require.resolve('process/browser.js');
+    } catch (e) {}
+
     config.plugins = (config.plugins || []).concat([
       new webpack.ProvidePlugin({
         process: 'process/browser',
