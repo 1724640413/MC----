@@ -5,5 +5,25 @@
       "username": "123123",
       "password": "$2b$10$vVc53SNlEtmhwVq8Y7BuQ.GAND0j1Q6fhBuUIy6.qJr2yF0l1Dk7S"
     }
+  ],
+  "songs": [
+    {
+      "id": 1,
+      "title": "稻香",
+      "artist": "周杰伦",
+      "filePath": "/mp3/dao-xiang.mp3"
+    },
+    {
+      "id": 2,
+      "title": "爱你",
+      "artist": "王心凌",
+      "filePath": "/mp3/ai-ni.mp3"
+    },
+    {
+      "id": 3,
+      "title": "起风了",
+      "artist": "买辣椒也用券",
+      "filePath": "/mp3/qi-feng-le.mp3"
+    }
   ]
 }

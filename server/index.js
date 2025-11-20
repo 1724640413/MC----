@@ -6,6 +6,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const { createClient } = require('redis');
+const fs = require('fs').promises;
+const path = require('path');
 require('dotenv').config(); // 引入并配置 dotenv
 
 // --- 基本设置 ---
@@ -20,6 +22,11 @@ const io = new Server(server, {
 
 app.use(cors());
 app.use(express.json());
+
+// --- 静态文件服务 ---
+// 提供 server/mp3 目录下的 MP3 文件
+app.use('/mp3', express.static(path.join(__dirname, 'mp3')));
+
 
 // --- PostgreSQL 数据库设置 ---
 const sequelize = new Sequelize(
@@ -41,6 +48,10 @@ const User = sequelize.define('User', {
   password: {
     type: DataTypes.STRING,
     allowNull: false
+  },
+  avatarUrl: {
+    type: DataTypes.STRING,
+    allowNull: true
   }
 });
 
@@ -61,7 +72,7 @@ redisClient.on('error', (err) => console.log('Redis Client Error', err));
 const initializeDatabases = async () => {
   try {
     await sequelize.authenticate();
-    await sequelize.sync(); // 同步模型到数据库
+    await sequelize.sync({ alter: true }); // 同步模型到数据库
     console.log('PostgreSQL connection has been established successfully.');
     await redisClient.connect();
     console.log('Redis connection has been established successfully.');
@@ -279,8 +290,38 @@ app.get('/api/friends', authenticateToken, async (req, res) => {
 
         res.json(friends);
     } catch (error) {
-        res.status(500).json({ message: 'Error fetching friends.' });
+    res.status(500).json({ message: 'Error fetching friends.' });
+  }
+});
+
+app.put('/api/user/avatar', authenticateToken, async (req, res) => {
+    const { avatarUrl } = req.body;
+    const userId = req.user.id;
+
+    try {
+        const user = await User.findByPk(userId);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        user.avatarUrl = avatarUrl;
+        await user.save();
+        res.status(200).json({ message: 'Avatar updated successfully.', avatarUrl });
+    } catch (error) {
+        res.status(500).json({ message: 'Error updating avatar.' });
     }
+});
+
+// 获取歌曲列表
+app.get('/api/songs', async (req, res) => {
+  try {
+    const dbPath = path.join(__dirname, 'db.json');
+    const data = await fs.readFile(dbPath, 'utf8');
+    const db = JSON.parse(data);
+    res.json(db.songs || []);
+  } catch (error) {
+    console.error('Error reading songs database:', error);
+    res.status(500).json({ message: 'Error fetching songs.' });
+  }
 });
 
 
@@ -304,7 +345,9 @@ io.on('connection', (socket) => {
   socket.on('join-room', async (roomId) => {
     const roomKey = `room:${roomId}`;
     const socketRoomMapKey = 'socket_to_room';
-    const currentUser = JSON.stringify({ id: socket.id, username });
+    
+    const user = await User.findOne({ where: { username: socket.user.username } });
+    const currentUser = JSON.stringify({ id: socket.id, username, avatarUrl: user ? user.avatarUrl : null });
     
     // lRange expects string/buffer args for start/end in this client implementation
     const otherUsersRaw = await redisClient.lRange(roomKey, '0', '-1');
@@ -414,19 +457,19 @@ io.on('connection', (socket) => {
       const { id, type } = req.body || {};
       if (!id) return res.status(400).json({ message: '房间ID不能为空' });
       const roomKey = `room:${id}`;
-      const exists = await redisClient.exists(roomKey).catch(() => 0);
-      if (exists) return res.status(400).json({ message: '房间已存在' });
-      await redisClient.hSet(`room_meta:${id}`, {
-        type: (type || 'voice'),
-        creator: decoded.username,
-        createdAt: new Date().toISOString(),
-      }).catch(() => {});
-      if (type === 'k') {
-        const locksKey = `room:${id}:locks`;
-        const updates = {};
-        for (let i = 0; i < 16; i++) { updates[`lock:${i}`] = '0'; }
-        await redisClient.hSet(locksKey, updates).catch(() => {});
-      }
+    const exists = await redisClient.exists(roomKey);
+    if (exists) return res.status(400).json({ message: '房间已存在' });
+    await redisClient.hSet(`room_meta:${id}`, {
+      type: (type || 'voice'),
+      creator: decoded.username,
+      createdAt: new Date().toISOString(),
+    });
+    if (type === 'k') {
+      const locksKey = `room:${id}:locks`;
+      const updates = {};
+      for (let i = 0; i < 16; i++) { updates[`lock:${i}`] = '0'; }
+      await redisClient.hSet(locksKey, updates);
+    }
       return res.json({ ok: true, id, type: type || 'voice' });
     } catch (e) {
       return res.status(500).json({ message: '创建失败' });
@@ -604,7 +647,8 @@ io.on('connection', (socket) => {
     }
 
     // 占用目标麦位
-    const occupant = JSON.stringify({ id: socket.id, username });
+    const user = await User.findOne({ where: { username: socket.user.username } });
+    const occupant = JSON.stringify({ id: socket.id, username, avatarUrl: user ? user.avatarUrl : null });
     await redisClient.hSet(seatsKey, `seat:${index}`, occupant);
     const seats = await buildSeatsResponse(redisClient, roomId);
     io.to(roomId).emit('k_seats_update', seats);
@@ -630,10 +674,45 @@ io.on('connection', (socket) => {
   socket.on('k_toggle_lock', async (payload) => {
     const { roomId, index } = payload;
     if (index < 0 || index > 15) return;
+    const meta = await redisClient.hGetAll(`room_meta:${roomId}`).catch(() => ({}));
+    if (!meta || meta.creator !== socket.user?.username) return; // Only owner can lock
+
     const locksKey = `room:${roomId}:locks`;
     const current = await redisClient.hGet(locksKey, `lock:${index}`);
     const next = current === '1' ? '0' : '1';
     await redisClient.hSet(locksKey, `lock:${index}`, next);
+    const seats = await buildSeatsResponse(redisClient, roomId);
+    io.to(roomId).emit('k_seats_update', seats);
+  });
+
+  socket.on('k_assign_seat', async (payload) => {
+    const { roomId, index, userId } = payload;
+    if (index < 0 || index > 15 || !userId) return;
+    const meta = await redisClient.hGetAll(`room_meta:${roomId}`).catch(() => ({}));
+    if (!meta || meta.creator !== socket.user?.username) return; // Only owner can assign
+
+    // Find the user to assign
+    const roomKey = `room:${roomId}`;
+    const usersRaw = await redisClient.lRange(roomKey, '0', '-1');
+    const userToAssign = usersRaw.map(JSON.parse).find(u => u.id === userId);
+
+    if (userToAssign) {
+        const seatsKey = `room:${roomId}:seats`;
+        const occupant = JSON.stringify(userToAssign);
+        await redisClient.hSet(seatsKey, `seat:${index}`, occupant);
+        const seats = await buildSeatsResponse(redisClient, roomId);
+        io.to(roomId).emit('k_seats_update', seats);
+    }
+  });
+
+  socket.on('k_kick_seat', async (payload) => {
+    const { roomId, index } = payload;
+    if (index < 0 || index > 15) return;
+    const meta = await redisClient.hGetAll(`room_meta:${roomId}`).catch(() => ({}));
+    if (!meta || meta.creator !== socket.user?.username) return; // Only owner can kick
+
+    const seatsKey = `room:${roomId}:seats`;
+    await redisClient.hDel(seatsKey, `seat:${index}`);
     const seats = await buildSeatsResponse(redisClient, roomId);
     io.to(roomId).emit('k_seats_update', seats);
   });

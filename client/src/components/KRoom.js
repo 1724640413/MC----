@@ -1,25 +1,20 @@
-import React, { useEffect, useState, useRef } from 'react';
-import Peer from 'simple-peer';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import GlobalMuteButton from './GlobalMuteButton';
 import SongList from './SongList';
 import Seat from './Seat';
 import NoiseReductionMenu from './NoiseReductionMenu';
 import EffectsMenu from './EffectsMenu';
 import io from 'socket.io-client';
-import './KRoom.css'; // 导入新的 CSS 文件
+import './KRoom.css';
 
-// 语音渲染组件
-const Audio3D = ({ peer, panPosition }) => {
-  const audioRef = useRef();
-  useEffect(() => {
-    // WebAudio 管道逻辑保持不变
-    // ...
-    return () => { /* 清理逻辑 */ };
-  }, [peer, panPosition]);
-  return <audio playsInline autoPlay ref={audioRef} />;
-};
+function parseJwt (token) {
+    try {
+        return JSON.parse(atob(token.split('.')[1]));
+    } catch (e) {
+        return null;
+    }
+}
 
-// K 歌房主组件
 const KRoom = ({ token, roomId, onLeaveRoom }) => {
   const [peers, setPeers] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -27,33 +22,98 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [seats, setSeats] = useState(Array.from({ length: 16 }, (_, i) => ({ index: i, occupant: null, locked: false })));
   const [noiseMode, setNoiseMode] = useState('standard');
-  const [queue, setQueue] = useState([]);
-  const [currentSong, setCurrentSong] = useState(null);
+  const [queue] = useState([]);
+  const [currentSong] = useState(null);
   const [effectPreset, setEffectPreset] = useState('standard');
-  const [score, setScore] = useState(0);
+  const [score] = useState(0);
   const [isOwner, setIsOwner] = useState(false);
-
+  
   const socketRef = useRef();
-  const userAudioRef = useRef();
   const peersRef = useRef([]);
-  const scoreTimerRef = useRef();
+  const currentUser = useMemo(() => parseJwt(token), [token]);
 
-  // ... (所有核心逻辑函数保持不变)
+  // Derived state for audience list
+  const audience = useMemo(() => {
+    const onSeatUsers = new Set(seats.map(s => s.occupant?.username).filter(Boolean));
+    return peers.filter(p => !onSeatUsers.has(p.username));
+  }, [peers, seats]);
 
-  // 切换静音状态并通知服务器（如果已连接）
-  const toggleMute = () => {
-    setIsMuted(prev => {
-      const next = !prev;
-      try {
-        if (socketRef.current && socketRef.current.emit) {
-          socketRef.current.emit('user-mute-status', { roomId, isMuted: next });
-        }
-      } catch (e) {
-        // ignore emit errors in dev
-      }
-      // 如果正在使用本地音频流，也可在此停止/恢复轨道（留给完整实现）
-      return next;
+  // Main connection effect
+  useEffect(() => {
+    socketRef.current = io('http://localhost:3001', {
+      auth: { token }
     });
+
+    const socket = socketRef.current;
+
+    socket.on('connect', () => {
+      console.log('Connected to server');
+      socket.emit('join-room', roomId);
+      
+      socket.emit('k_get_seats', roomId, (initialSeats) => {
+        setSeats(initialSeats);
+      });
+
+      socket.emit('get_room_meta', roomId, (meta) => {
+        if (currentUser && meta.creator === currentUser.username) {
+            setIsOwner(true);
+        }
+      });
+    });
+
+    socket.on('existing-room-users', (users) => {
+        setPeers(users);
+        peersRef.current = users;
+    });
+
+    socket.on('new-user-joined', (user) => {
+      setMessages(prev => [...prev, { username: 'System', message: `${user.username} has joined the room.` }]);
+      setPeers(prev => [...prev, user]);
+      peersRef.current.push(user);
+    });
+
+    socket.on('user-left', (socketId) => {
+        const leftUser = peersRef.current.find(p => p.peerID === socketId);
+        if (leftUser) {
+            setMessages(prev => [...prev, { username: 'System', message: `${leftUser.username} has left the room.` }]);
+        }
+        setPeers(prev => prev.filter(p => p.peerID !== socketId));
+        peersRef.current = peersRef.current.filter(p => p.peerID !== socketId);
+    });
+
+    socket.on('k_seats_update', (updatedSeats) => {
+      setSeats(updatedSeats);
+    });
+
+    return () => {
+      if (socket) {
+        socket.disconnect();
+      }
+    };
+  }, [roomId, token, currentUser]);
+
+  const handleJoinSeat = (index) => {
+    socketRef.current.emit('k_join_seat', { roomId, index });
+  };
+
+  const handleLeaveSeat = (index) => {
+    socketRef.current.emit('k_leave_seat', { roomId, index });
+  };
+
+  const handleAssignSeat = (index, userId) => {
+    socketRef.current.emit('k_assign_seat', { roomId, index, userId });
+  };
+
+  const handleKickFromSeat = (index) => {
+    socketRef.current.emit('k_kick_seat', { roomId, index });
+  };
+
+  const handleToggleLock = (index) => {
+    socketRef.current.emit('k_toggle_lock', { roomId, index });
+  };
+
+  const toggleMute = () => {
+    setIsMuted(prev => !prev);
   };
 
   return (
@@ -67,45 +127,49 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
         <button onClick={onLeaveRoom} className="kroom-button">离开房间</button>
         <button onClick={toggleMute} className="kroom-button">{isMuted ? '取消静音' : '静音'}</button>
         <GlobalMuteButton />
-        <NoiseReductionMenu noiseMode={noiseMode} onNoiseModeChange={() => {}} />
-        <EffectsMenu effectPreset={effectPreset} onEffectPresetChange={() => {}} />
+        <NoiseReductionMenu noiseMode={noiseMode} onNoiseModeChange={setNoiseMode} />
+        <EffectsMenu effectPreset={effectPreset} onEffectPresetChange={setEffectPreset} />
       </div>
 
-      <h3>麦位（最多16人上麦）</h3>
+      <h3>麦位</h3>
       <div className="seat-grid">
         {seats.map((seat) => (
           <Seat 
             key={seat.index} 
             seat={seat} 
-            onJoin={() => {}} 
-            onLeave={() => {}} 
-            onToggleLock={() => {}} 
+            onJoin={() => handleJoinSeat(seat.index)} 
+            onLeave={() => handleLeaveSeat(seat.index)} 
+            onToggleLock={() => handleToggleLock(seat.index)}
+            onAssign={handleAssignSeat}
+            onKick={handleKickFromSeat}
             isOwner={isOwner}
             currentUserId={socketRef.current ? socketRef.current.id : null}
+            audience={audience}
           />
         ))}
       </div>
 
-      <h3>参与者（3D环绕）</h3>
-      <div className="participants-list">
-        {peers.map((p) => (
-          <div key={p.peerID} className="participant">
-            <Audio3D peer={p.peer} panPosition={p.panPosition} />
-            <p>{p.username} {p.isMuted ? '(已静音)' : ''}</p>
-          </div>
-        ))}
+      <div className="kroom-main-content">
+        <div className="kroom-left-panel">
+            <h3>麦下用户</h3>
+            <div className="audience-list">
+                {audience.map(user => (
+                    <div key={user.peerID} className="audience-member">{user.username}</div>
+                ))}
+            </div>
+        </div>
+        <div className="kroom-right-panel">
+            <SongList 
+                songs={queue} 
+                currentSong={currentSong}
+                onAddSong={() => {}} 
+                onNextSong={() => {}} 
+                onRemoveSong={() => {}} 
+                onMoveSong={() => {}} 
+                isOwner={isOwner}
+            />
+        </div>
       </div>
-
-      <hr />
-      <SongList 
-        songs={queue} 
-        currentSong={currentSong}
-        onAddSong={() => {}} 
-        onNextSong={() => {}} 
-        onRemoveSong={() => {}} 
-        onMoveSong={() => {}} 
-        isOwner={isOwner}
-      />
 
       <div className="chat-container">
         <h3>聊天室</h3>
@@ -114,7 +178,7 @@ const KRoom = ({ token, roomId, onLeaveRoom }) => {
             <div key={idx}><strong>{msg.username}:</strong> {msg.message}</div>
           ))}
         </div>
-        <form onSubmit={() => {}} className="chat-form">
+        <form onSubmit={(e) => e.preventDefault()} className="chat-form">
           <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="输入消息..." />
           <button type="submit">发送</button>
         </form>
